@@ -163,6 +163,25 @@
     overflow: hidden;
   }
   .tally .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .tally .line .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .tally .amt { min-width: 88px; text-align: right; white-space: nowrap; }
+  .spark { flex: none; width: 84px; height: 24px; align-self: center; }
+  .spark polyline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .spark circle { fill: var(--accent); }
+  .chart { padding: 14px 14px 10px; }
+  .chart svg { display: block; width: 100%; height: auto; }
+  .chart .bar { fill: var(--accent); }
+  .chart .bar.dim { opacity: 0.35; }
+  .chart .base { stroke: var(--line); stroke-width: 1; }
+  .chart .hit { fill: transparent; cursor: pointer; }
+  .chart .ends { display: flex; justify-content: space-between; margin-top: 6px; }
+  .chart .cap { margin-top: 8px; min-height: 21px; }
+  .note { font-size: 14px; overflow-wrap: anywhere; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .stat { padding: 10px 14px; }
+  .stat .v { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tag { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
   .empty { padding: 18px 14px; color: var(--muted); }
   .x {
     background: none;
@@ -282,7 +301,7 @@
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
   let sb = null;
-  const state = { view: "loading", categories: [], expenses: [], period: "month", message: "" };
+  const state = { view: "loading", categories: [], expenses: [], period: "month", message: "", v2: true, sel: null, addKind: "expense", catKind: "expense" };
 
   // ---------- small helpers ----------
 
@@ -300,6 +319,19 @@
       if (kid == null || kid === false) continue;
       n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
     }
+    return n;
+  }
+
+  function svg(tag, attrs, ...kids) {
+    const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    if (attrs) {
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v == null || v === false) continue;
+        if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+        else n.setAttribute(k, v);
+      }
+    }
+    for (const kid of kids.flat()) { if (kid) n.append(kid); }
     return n;
   }
 
@@ -337,9 +369,9 @@
 
   // A deleted category has no match here, so its expenses fall back to Default.
   // Adding the category again brings them back, because the original name is kept.
-  function effective(name) {
+  function effective(name, kind) {
     const key = String(name || "").trim().toLowerCase();
-    const hit = state.categories.find((c) => c.name.toLowerCase() === key);
+    const hit = state.categories.find((c) => c.kind === kind && c.name.toLowerCase() === key);
     return hit ? hit.name : DEFAULT;
   }
 
@@ -350,14 +382,104 @@
     return null;
   }
 
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function dayKey(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function monthKey(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1); }
+
+  // The time slots the charts are drawn over: one per day for this month,
+  // one per month for this year, and for all time whichever of the two fits.
+  function buckets(period) {
+    const now = new Date();
+    let start = periodStart(period);
+    let unit = period === "year" ? "month" : "day";
+    if (!start) {
+      if (!state.expenses.length) return { unit: "day", keys: [] };
+      const first = new Date(state.expenses[state.expenses.length - 1].logged_at);
+      start = new Date(first.getFullYear(), first.getMonth(), first.getDate());
+      if ((now - start) / 86400000 > 62) { unit = "month"; start = new Date(start.getFullYear(), start.getMonth(), 1); }
+    }
+    const keys = [];
+    const d = new Date(start);
+    while (d <= now && keys.length < 400) {
+      keys.push(unit === "day" ? dayKey(d) : monthKey(d));
+      if (unit === "day") d.setDate(d.getDate() + 1); else d.setMonth(d.getMonth() + 1);
+    }
+    return { unit: unit, keys: keys };
+  }
+
+  function bucketLabel(key, unit) {
+    const p = key.split("-").map(Number);
+    const d = new Date(p[0], p[1] - 1, p[2] || 1);
+    return unit === "day"
+      ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  }
+
+  function sparkline(values) {
+    const W = 84, H = 24, P = 3;
+    const max = Math.max.apply(null, values.concat([1]));
+    const n = values.length;
+    const x = (i) => (n === 1 ? W - P : P + (i * (W - 2 * P)) / (n - 1));
+    const y = (v) => H - P - (v / max) * (H - 2 * P);
+    const pts = values.map((v, i) => x(i).toFixed(1) + "," + y(v).toFixed(1)).join(" ");
+    return svg("svg", { class: "spark", viewBox: "0 0 " + W + " " + H, "aria-hidden": "true" },
+      n > 1 ? svg("polyline", { points: pts }) : null,
+      svg("circle", { cx: x(n - 1), cy: y(values[n - 1]), r: 2.5 })
+    );
+  }
+
+  function barChart(b, totals) {
+    const W = 320, H = 110, n = b.keys.length;
+    const max = Math.max.apply(null, totals.concat([1]));
+    const slot = W / n;
+    const bw = Math.max(2, Math.min(22, slot - 2));
+    const unitWord = b.unit === "day" ? "day" : "month";
+    const idle = "Total per " + unitWord + ", all categories. Tap a bar for its amount.";
+    const cap = h("div", { class: "cap muted small", "aria-live": "polite" });
+    const bars = [];
+    function show() {
+      const i = b.keys.indexOf(state.sel);
+      bars.forEach((el, j) => { if (el) el.setAttribute("class", "bar" + (i !== -1 && j !== i ? " dim" : "")); });
+      cap.textContent = i === -1 ? idle : bucketLabel(b.keys[i], b.unit) + ": " + fmt(totals[i]);
+    }
+    const kids = [];
+    b.keys.forEach((key, i) => {
+      const v = totals[i];
+      const cx = slot * i + slot / 2;
+      let el = null;
+      if (v > 0) {
+        const bh = Math.max(3, (v / max) * (H - 6));
+        const r = Math.min(4, bw / 2, bh);
+        const x0 = cx - bw / 2, x1 = cx + bw / 2, top = H - bh;
+        el = svg("path", { class: "bar", d: "M" + x0 + "," + H + " V" + (top + r) + " Q" + x0 + "," + top + " " + (x0 + r) + "," + top +
+          " H" + (x1 - r) + " Q" + x1 + "," + top + " " + x1 + "," + (top + r) + " V" + H + " Z" });
+        kids.push(el);
+      }
+      bars.push(el);
+    });
+    b.keys.forEach((key, i) => {
+      kids.push(svg("rect", { class: "hit", x: slot * i, y: 0, width: slot, height: H,
+        onclick: () => { state.sel = state.sel === key ? null : key; show(); } }));
+    });
+    kids.push(svg("line", { class: "base", x1: 0, y1: H, x2: W, y2: H }));
+    show();
+    return h("div", { class: "card chart" },
+      svg("svg", { viewBox: "0 0 " + W + " " + (H + 1), role: "img", "aria-label": "Bar chart of total spending per " + unitWord }, kids),
+      h("div", { class: "ends muted small" },
+        h("span", null, bucketLabel(b.keys[0], b.unit)),
+        n > 1 ? h("span", null, bucketLabel(b.keys[n - 1], b.unit)) : null),
+      cap
+    );
+  }
+
   function when(iso) {
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " +
       d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   }
 
-  function sortedCategories() {
-    return state.categories.slice().sort((a, b) => a.name.localeCompare(b.name));
+  function sortedCategories(kind) {
+    return state.categories.filter((c) => c.kind === kind).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   function go(view) {
@@ -368,23 +490,41 @@
 
   // ---------- data ----------
 
+  function missingColumn(err) {
+    return !!err && (err.code === "42703" || err.code === "PGRST204" || /\b(note|kind)\b/i.test(err.message || ""));
+  }
+  function expenseCols() { return "id,category,amount,logged_at" + (state.v2 ? ",note,kind" : ""); }
+  function categoryCols() { return "id,name" + (state.v2 ? ",kind" : ""); }
+
+  async function fetchAll() {
+    const cats = await sb.from("categories").select(categoryCols()).order("name");
+    if (cats.error) throw cats.error;
+    const all = [];
+    for (let from = 0; ; from += PAGE) {
+      const page = await sb.from("expenses")
+        .select(expenseCols())
+        .order("logged_at", { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (page.error) throw page.error;
+      all.push(...page.data);
+      if (page.data.length < PAGE) break;
+    }
+    state.categories = cats.data.map((c) => Object.assign(c, { kind: c.kind || "expense" }));
+    state.expenses = all.map((e) => Object.assign(e, { kind: e.kind || "expense" }));
+  }
+
   async function loadData() {
     go("loading");
     try {
-      const cats = await sb.from("categories").select("id,name").order("name");
-      if (cats.error) throw cats.error;
-      const all = [];
-      for (let from = 0; ; from += PAGE) {
-        const page = await sb.from("expenses")
-          .select("id,category,amount,logged_at")
-          .order("logged_at", { ascending: false })
-          .range(from, from + PAGE - 1);
-        if (page.error) throw page.error;
-        all.push(...page.data);
-        if (page.data.length < PAGE) break;
+      try {
+        await fetchAll();
+      } catch (err) {
+        // Notes and income need the columns added by migration_v2.sql. Until
+        // that has been run, carry on with expenses only instead of failing.
+        if (!state.v2 || !missingColumn(err)) throw err;
+        state.v2 = false;
+        await fetchAll();
       }
-      state.categories = cats.data;
-      state.expenses = all;
       go("home");
     } catch (err) {
       state.message = (err && err.message) || "Could not load your data.";
@@ -392,12 +532,12 @@
     }
   }
 
-  async function addExpense(category, cents) {
-    const res = await sb.from("expenses")
-      .insert({ category: category, amount: (cents / 100).toFixed(2), logged_at: new Date().toISOString() })
-      .select("id,category,amount,logged_at")
-      .single();
+  async function addEntry(kind, category, cents, note) {
+    const row = { category: category, amount: (cents / 100).toFixed(2), logged_at: new Date().toISOString() };
+    if (state.v2) { row.kind = kind; if (note) row.note = note; }
+    const res = await sb.from("expenses").insert(row).select(expenseCols()).single();
     if (res.error) throw res.error;
+    res.data.kind = res.data.kind || "expense";
     state.expenses.unshift(res.data);
     return res.data;
   }
@@ -408,9 +548,12 @@
     state.expenses = state.expenses.filter((e) => e.id !== id);
   }
 
-  async function addCategory(name) {
-    const res = await sb.from("categories").insert({ name: name }).select("id,name").single();
+  async function addCategory(name, kind) {
+    const row = { name: name };
+    if (state.v2) row.kind = kind;
+    const res = await sb.from("categories").insert(row).select(categoryCols()).single();
     if (res.error) throw res.error;
+    res.data.kind = res.data.kind || "expense";
     state.categories.push(res.data);
   }
 
@@ -486,65 +629,107 @@
 
   function viewHome() {
     const start = periodStart(state.period);
-    const totals = new Map();
-    let sum = 0;
+    const b = buckets(state.period);
+    const slotOf = new Map(b.keys.map((k, i) => [k, i]));
+    const overall = b.keys.map(() => 0);
+    const tot = { expense: new Map(), income: new Map() };
+    const ser = { expense: new Map(), income: new Map() };
+    const sum = { expense: 0, income: 0 };
     for (const e of state.expenses) {
-      if (start && new Date(e.logged_at) < start) continue;
-      const cat = effective(e.category);
+      const at = new Date(e.logged_at);
+      if (start && at < start) continue;
+      const kind = e.kind;
+      const cat = effective(e.category, kind);
       const cents = toCents(e.amount);
-      totals.set(cat, (totals.get(cat) || 0) + cents);
-      sum += cents;
+      tot[kind].set(cat, (tot[kind].get(cat) || 0) + cents);
+      sum[kind] += cents;
+      const i = slotOf.get(b.unit === "day" ? dayKey(at) : monthKey(at));
+      if (i == null) continue;
+      if (kind === "expense") overall[i] += cents;
+      if (!ser[kind].has(cat)) ser[kind].set(cat, b.keys.map(() => 0));
+      ser[kind].get(cat)[i] += cents;
     }
-    const rows = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-    const max = rows.length ? rows[0][1] : 0;
 
     const periods = [["month", "This month"], ["year", "This year"], ["all", "All time"]];
     const seg = h("div", { class: "seg", role: "group", "aria-label": "Period" },
       periods.map(([id, label]) => h("button", {
         type: "button",
         "aria-pressed": state.period === id ? "true" : "false",
-        onclick: () => { state.period = id; render(); }
+        onclick: () => { state.period = id; state.sel = null; render(); }
       }, label))
     );
 
-    const tally = h("div", { class: "card" },
-      rows.length
-        ? rows.map(([name, cents]) => h("div", { class: "tally" },
-            h("div", { class: "line" }, h("span", { class: "name" }, name), h("span", { class: "amt" }, fmt(cents))),
-            h("div", { class: "track" }, h("div", { class: "fill", style: "width:" + (max ? Math.max(2, Math.round((cents / max) * 100)) : 0) + "%" }))
-          ))
-        : h("div", { class: "empty" }, state.expenses.length ? "Nothing logged in this period." : "Nothing logged yet. Enter your first expense below.")
-    );
+    function tally(kind, emptyText) {
+      const rows = [...tot[kind].entries()].sort((a, b) => b[1] - a[1]);
+      const max = rows.length ? rows[0][1] : 0;
+      return h("div", { class: "card" },
+        rows.length
+          ? rows.map(([name, cents]) => h("div", { class: "tally" },
+              h("div", { class: "line" }, h("span", { class: "name" }, name), ser[kind].has(name) ? sparkline(ser[kind].get(name)) : null, h("span", { class: "amt" }, fmt(cents))),
+              h("div", { class: "track" }, h("div", { class: "fill", style: "width:" + (max ? Math.max(2, Math.round((cents / max) * 100)) : 0) + "%" }))
+            ))
+          : h("div", { class: "empty" }, emptyText)
+      );
+    }
 
     const recent = state.expenses.slice(0, 8);
     const recentCard = h("div", { class: "card" },
-      recent.map((e) => h("div", { class: "row" },
-        h("div", { class: "name" },
-          h("div", null, effective(e.category)),
-          h("div", { class: "muted small" }, when(e.logged_at))
-        ),
-        h("div", { style: "display:flex;align-items:center;gap:6px" },
-          h("span", { class: "amt" }, fmt(toCents(e.amount))),
-          h("button", { class: "x", type: "button", "aria-label": "Delete this entry", onclick: async () => {
-            if (!confirm("Delete this " + fmt(toCents(e.amount)) + " entry?")) return;
-            try { await deleteExpense(e.id); render(); toast("Entry deleted."); }
-            catch (err) { toast(err.message || "Could not delete.", true); }
-          } }, "Delete")
-        )
-      ))
+      recent.map((e) => {
+        const income = e.kind === "income";
+        const shown = (income ? "+" : "") + fmt(toCents(e.amount));
+        return h("div", { class: "row" },
+          h("div", { class: "name" },
+            h("div", null, income ? h("span", { class: "tag" }, "Income") : null, effective(e.category, e.kind)),
+            e.note ? h("div", { class: "note" }, e.note) : null,
+            h("div", { class: "muted small" }, when(e.logged_at))
+          ),
+          h("div", { style: "display:flex;align-items:center;gap:6px" },
+            h("span", { class: "amt" }, shown),
+            h("button", { class: "x", type: "button", "aria-label": "Delete this entry", onclick: async () => {
+              if (!confirm("Delete this " + shown + " entry?")) return;
+              try { await deleteExpense(e.id); render(); toast("Entry deleted."); }
+              catch (err) { toast(err.message || "Could not delete.", true); }
+            } }, "Delete")
+          )
+        );
+      })
     );
 
+    const left = sum.income - sum.expense;
+    const head = state.v2
+      ? [
+          h("div", { class: "muted small" }, "Left (income minus spending)"),
+          h("div", { class: "total" }, (left < 0 ? "\u2212" : "") + fmt(Math.abs(left))),
+          h("div", { class: "stats" },
+            h("div", { class: "card stat" }, h("div", { class: "muted small" }, "Income"), h("div", { class: "v" }, fmt(sum.income))),
+            h("div", { class: "card stat" }, h("div", { class: "muted small" }, "Spent"), h("div", { class: "v" }, fmt(sum.expense)))
+          )
+        ]
+      : [
+          h("div", { class: "muted small" }, "Total spent"),
+          h("div", { class: "total" }, fmt(sum.expense))
+        ];
+
+    const open = (kind) => () => { state.addKind = kind; go("add"); };
     return h("div", null,
       h("div", { class: "top" }, h("h1", null, "Ledger")),
-      h("div", { class: "muted small" }, "Total spent"),
-      h("div", { class: "total" }, fmt(sum)),
+      head,
       seg,
       h("div", { class: "stack", style: "margin-top:18px" },
-        h("button", { class: "btn", type: "button", onclick: () => go("add") }, "Enter expense"),
-        h("button", { class: "btn secondary", type: "button", onclick: () => go("categories") }, "Edit categories")
+        h("button", { class: "btn", type: "button", onclick: open("expense") }, "Enter expense"),
+        state.v2
+          ? h("div", { class: "pair" },
+              h("button", { class: "btn secondary", type: "button", onclick: open("income") }, "Enter income"),
+              h("button", { class: "btn secondary", type: "button", onclick: () => go("categories") }, "Categories"))
+          : h("button", { class: "btn secondary", type: "button", onclick: () => go("categories") }, "Edit categories")
       ),
-      h("h2", null, "By category"),
-      tally,
+      state.v2 ? null : h("p", { class: "muted small", style: "margin-top:14px" }, "Notes and income are switched off until migration_v2.sql has been run in Supabase."),
+      sum.expense ? h("h2", null, "Spending over time") : null,
+      sum.expense ? barChart(b, overall) : null,
+      h("h2", null, "Spending by category"),
+      tally("expense", state.expenses.some((e) => e.kind === "expense") ? "No spending logged in this period." : "Nothing logged yet. Enter your first expense above."),
+      state.v2 ? h("h2", null, "Income by category") : null,
+      state.v2 ? tally("income", "No income logged in this period.") : null,
       recent.length ? h("h2", null, "Recent entries") : null,
       recent.length ? recentCard : null,
       h("div", { class: "foot" }, h("button", { type: "button", onclick: signOut }, "Sign out"))
@@ -552,13 +737,16 @@
   }
 
   function viewAdd() {
-    const last = lsGet(LAST_CAT_KEY);
-    const names = [DEFAULT].concat(sortedCategories().map((c) => c.name));
+    const kind = state.addKind;
+    const word = kind === "income" ? "income" : "expense";
+    const last = lsGet(LAST_CAT_KEY + "." + kind);
+    const names = [DEFAULT].concat(sortedCategories(kind).map((c) => c.name));
     const select = h("select", { id: "cat" },
       names.map((n) => h("option", { value: n, selected: n === last }, n))
     );
+    const note = h("input", { id: "note", type: "text", maxlength: "250", placeholder: "Optional", autocomplete: "off", enterkeyhint: "next" });
     const amount = h("input", { id: "amt", type: "text", inputmode: "decimal", placeholder: "0.00", autocomplete: "off", enterkeyhint: "done" });
-    const btn = h("button", { class: "btn", type: "submit", disabled: true }, "Log expense");
+    const btn = h("button", { class: "btn", type: "submit", disabled: true }, "Log " + word);
 
     function cents() { const c = toCents(amount.value || 0); return Number.isFinite(c) ? c : 0; }
     amount.addEventListener("input", () => {
@@ -577,21 +765,23 @@
       btn.disabled = true;
       btn.textContent = "Logging\u2026";
       try {
-        await addExpense(select.value, c);
-        lsSet(LAST_CAT_KEY, select.value);
+        await addEntry(kind, select.value, c, note.value.trim().replace(/\s+/g, " ").slice(0, 250));
+        lsSet(LAST_CAT_KEY + "." + kind, select.value);
         go("home");
-        toast("Logged " + fmt(c) + " to " + select.value + ".");
+        toast("Logged " + fmt(c) + (kind === "income" ? " of income under " : " to ") + select.value + ".");
       } catch (err) {
         btn.disabled = false;
-        btn.textContent = "Log expense";
+        btn.textContent = "Log " + word;
         toast(err.message || "Could not save. Check your connection.", true);
       }
     }
 
     setTimeout(() => amount.focus(), 0);
     return h("form", { onsubmit: submit },
-      h("div", { class: "top" }, h("h1", null, "Enter expense"), h("button", { class: "back", type: "button", onclick: () => go("home") }, "Cancel")),
+      h("div", { class: "top" }, h("h1", null, "Enter " + word), h("button", { class: "back", type: "button", onclick: () => go("home") }, "Cancel")),
       h("label", { for: "cat" }, "Category"), select,
+      state.v2 ? h("label", { for: "note" }, "Note") : null,
+      state.v2 ? note : null,
       h("label", { for: "amt" }, "Amount"),
       h("div", { class: "money" }, h("span", { "aria-hidden": "true" }, "$"), amount),
       h("div", { style: "margin-top:22px" }, btn),
@@ -600,37 +790,43 @@
   }
 
   function viewCategories() {
-    const input = h("input", { id: "newcat", type: "text", placeholder: "New category", maxlength: "40", autocomplete: "off", enterkeyhint: "done" });
+    const kind = state.v2 ? state.catKind : "expense";
+    const word = kind === "income" ? "income" : "expense";
+    const input = h("input", { id: "newcat", type: "text", placeholder: "New " + word + " category", maxlength: "40", autocomplete: "off", enterkeyhint: "done" });
     async function submit(ev) {
       ev.preventDefault();
       const name = input.value.trim().replace(/\s+/g, " ");
       if (!name) return;
       const lower = name.toLowerCase();
       if (lower === DEFAULT.toLowerCase()) { toast("Default is always there, so it can't be added.", true); return; }
-      if (state.categories.some((c) => c.name.toLowerCase() === lower)) { toast("You already have that category.", true); return; }
-      try { await addCategory(name); render(); toast("Added " + name + "."); }
+      if (state.categories.some((c) => c.kind === kind && c.name.toLowerCase() === lower)) { toast("You already have that category.", true); return; }
+      try { await addCategory(name, kind); render(); toast("Added " + name + "."); }
       catch (err) { toast(err.message || "Could not add.", true); }
     }
 
-    const cats = sortedCategories();
+    const cats = sortedCategories(kind);
     const list = h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { class: "name" }, DEFAULT), h("span", { class: "muted small" }, "Always available")),
       cats.map((c) => h("div", { class: "row" },
         h("span", { class: "name" }, c.name),
         h("button", { class: "x", type: "button", onclick: async () => {
-          if (!confirm("Delete \u201C" + c.name + "\u201D? Its past expenses will be counted under Default.")) return;
+          if (!confirm("Delete \u201C" + c.name + "\u201D? Its past entries will be counted under Default.")) return;
           try { await deleteCategory(c.id); render(); toast("Deleted " + c.name + "."); }
           catch (err) { toast(err.message || "Could not delete.", true); }
         } }, "Delete")
       ))
     );
 
+    const kinds = [["expense", "Expense"], ["income", "Income"]];
     return h("div", null,
       h("div", { class: "top" }, h("h1", null, "Categories"), h("button", { class: "back", type: "button", onclick: () => go("home") }, "Done")),
+      state.v2 ? h("div", { class: "seg", role: "group", "aria-label": "Category type", style: "margin-bottom:14px" },
+        kinds.map(([id, label]) => h("button", { type: "button", "aria-pressed": kind === id ? "true" : "false",
+          onclick: () => { state.catKind = id; render(); } }, label))) : null,
       h("form", { class: "inline", onsubmit: submit }, input, h("button", { class: "btn", type: "submit" }, "Add")),
-      h("h2", null, "Your list"),
+      h("h2", null, "Your " + word + " categories"),
       list,
-      h("p", { class: "muted small", style: "margin-top:14px" }, "Deleting a category moves its past expenses to Default. If you add the same name again later, that history comes back to it.")
+      h("p", { class: "muted small", style: "margin-top:14px" }, "Deleting a category moves its past entries to Default. If you add the same name again later, that history comes back to it.")
     );
   }
 
