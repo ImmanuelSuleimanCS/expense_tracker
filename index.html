@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141614" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Ledger</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f5c4a'/%3E%3Ctext x='32' y='45' font-family='Georgia,serif' font-size='38' text-anchor='middle' fill='%23f4f1ea'%3E$%3C/text%3E%3C/svg%3E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #f4f1ea;
+    --card: #fbf9f4;
+    --ink: #1c1b18;
+    --muted: #6d6a62;
+    --line: #dcd7cb;
+    --accent: #1f5c4a;
+    --accent-ink: #f4f1ea;
+    --bar: #cfe0d8;
+    --danger: #a23b2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141614;
+      --card: #1c1f1c;
+      --ink: #e9e6df;
+      --muted: #9a978f;
+      --line: #2e322e;
+      --accent: #6fc3a4;
+      --accent-ink: #10201a;
+      --bar: #26392f;
+      --danger: #e08a78;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+    min-height: 100vh;
+  }
+  h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    font-size: 26px;
+    letter-spacing: 0.01em;
+    margin: 0;
+  }
+  h2 {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 28px 0 8px;
+  }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 14px; }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .back {
+    background: none;
+    border: 0;
+    color: var(--accent);
+    font: inherit;
+    padding: 10px 0;
+    cursor: pointer;
+  }
+  .total {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 46px;
+    line-height: 1.1;
+    margin: 4px 0 14px;
+    overflow-wrap: anywhere;
+  }
+  .seg {
+    display: flex;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .seg button {
+    flex: 1;
+    background: none;
+    border: 0;
+    color: var(--muted);
+    font: inherit;
+    font-size: 14px;
+    padding: 10px 4px;
+    cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+  .btn {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: inherit;
+    font-size: 18px;
+    font-weight: 600;
+    padding: 16px;
+    cursor: pointer;
+  }
+  .btn.secondary {
+    background: transparent;
+    color: var(--accent);
+    font-size: 16px;
+    padding: 13px;
+  }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .stack > * + * { margin-top: 10px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row .name { min-width: 0; overflow-wrap: anywhere; }
+  .row .amt { white-space: nowrap; font-weight: 600; }
+  .tally { padding: 12px 14px; }
+  .tally + .tally { border-top: 1px solid var(--line); }
+  .tally .line {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .tally .track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bar);
+    overflow: hidden;
+  }
+  .tally .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .empty { padding: 18px 14px; color: var(--muted); }
+  .x {
+    background: none;
+    border: 0;
+    color: var(--danger);
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 0 8px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 18px 0 6px;
+  }
+  input, select {
+    width: 100%;
+    background: var(--card);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    font: inherit;
+    font-size: 18px;
+    padding: 14px;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  select {
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 22px) 55%, calc(100% - 16px) 55%;
+    background-size: 6px 6px;
+    background-repeat: no-repeat;
+    padding-right: 40px;
+  }
+  input:focus, select:focus, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .money { position: relative; }
+  .money span {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: Georgia, serif;
+    font-size: 30px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+  .money input {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 34px;
+    padding: 14px 14px 14px 44px;
+  }
+  .inline { display: flex; gap: 8px; }
+  .inline input { flex: 1; min-width: 0; }
+  .inline .btn { width: auto; font-size: 16px; padding: 0 20px; }
+  .foot {
+    margin-top: 32px;
+    text-align: center;
+    font-size: 14px;
+  }
+  .foot button {
+    background: none;
+    border: 0;
+    color: var(--muted);
+    font: inherit;
+    text-decoration: underline;
+    padding: 10px;
+    cursor: pointer;
+  }
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(20px);
+    max-width: calc(100% - 32px);
+    background: var(--ink);
+    color: var(--bg);
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 15px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.error { background: var(--danger); color: #fff; }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Optional: paste your Supabase project URL and publishable key here to skip
+  // the first-run setup screen. Both are safe to commit to a public repo, as
+  // long as the row-level security policies from schema.sql are in place.
+  const CONFIG = { url: "", key: "" };
+
+  const STORE_KEY = "ledger.supabase";
+  const LAST_CAT_KEY = "ledger.lastCategory";
+  const DEFAULT = "Default";
+  const PAGE = 1000;
+
+  const app = document.getElementById("app");
+  const toastEl = document.getElementById("toast");
+  const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+  let sb = null;
+  const state = { view: "loading", categories: [], expenses: [], period: "month", message: "" };
+
+  // ---------- small helpers ----------
+
+  function h(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    if (attrs) {
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v == null || v === false) continue;
+        if (k === "class") n.className = v;
+        else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+        else n.setAttribute(k, v === true ? "" : v);
+      }
+    }
+    for (const kid of kids.flat()) {
+      if (kid == null || kid === false) continue;
+      n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    }
+    return n;
+  }
+
+  let toastTimer = null;
+  function toast(msg, isError) {
+    toastEl.textContent = msg;
+    toastEl.className = "show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = ""; }, isError ? 5000 : 2600);
+  }
+
+  function lsGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function lsSet(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+  function lsDel(key) { try { localStorage.removeItem(key); } catch (e) {} }
+
+  function getConfig() {
+    if (CONFIG.url && CONFIG.key) return CONFIG;
+    try {
+      const s = JSON.parse(lsGet(STORE_KEY) || "null");
+      if (s && s.url && s.key) return s;
+    } catch (e) {}
+    return null;
+  }
+
+  function toCents(v) { return Math.round(Number(v) * 100); }
+  function fmt(cents) { return money.format(cents / 100); }
+
+  // Keep only digits and a single decimal point with at most two places.
+  function cleanAmount(v) {
+    v = v.replace(/[^0-9.]/g, "");
+    const i = v.indexOf(".");
+    if (i !== -1) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, "").slice(0, 2);
+    return v;
+  }
+
+  // A deleted category has no match here, so its expenses fall back to Default.
+  // Adding the category again brings them back, because the original name is kept.
+  function effective(name) {
+    const key = String(name || "").trim().toLowerCase();
+    const hit = state.categories.find((c) => c.name.toLowerCase() === key);
+    return hit ? hit.name : DEFAULT;
+  }
+
+  function periodStart(period) {
+    const now = new Date();
+    if (period === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
+    if (period === "year") return new Date(now.getFullYear(), 0, 1);
+    return null;
+  }
+
+  function when(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " +
+      d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+
+  function sortedCategories() {
+    return state.categories.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function go(view) {
+    state.view = view;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  // ---------- data ----------
+
+  async function loadData() {
+    go("loading");
+    try {
+      const cats = await sb.from("categories").select("id,name").order("name");
+      if (cats.error) throw cats.error;
+      const all = [];
+      for (let from = 0; ; from += PAGE) {
+        const page = await sb.from("expenses")
+          .select("id,category,amount,logged_at")
+          .order("logged_at", { ascending: false })
+          .range(from, from + PAGE - 1);
+        if (page.error) throw page.error;
+        all.push(...page.data);
+        if (page.data.length < PAGE) break;
+      }
+      state.categories = cats.data;
+      state.expenses = all;
+      go("home");
+    } catch (err) {
+      state.message = (err && err.message) || "Could not load your data.";
+      go("error");
+    }
+  }
+
+  async function addExpense(category, cents) {
+    const res = await sb.from("expenses")
+      .insert({ category: category, amount: (cents / 100).toFixed(2), logged_at: new Date().toISOString() })
+      .select("id,category,amount,logged_at")
+      .single();
+    if (res.error) throw res.error;
+    state.expenses.unshift(res.data);
+    return res.data;
+  }
+
+  async function deleteExpense(id) {
+    const res = await sb.from("expenses").delete().eq("id", id);
+    if (res.error) throw res.error;
+    state.expenses = state.expenses.filter((e) => e.id !== id);
+  }
+
+  async function addCategory(name) {
+    const res = await sb.from("categories").insert({ name: name }).select("id,name").single();
+    if (res.error) throw res.error;
+    state.categories.push(res.data);
+  }
+
+  async function deleteCategory(id) {
+    const res = await sb.from("categories").delete().eq("id", id);
+    if (res.error) throw res.error;
+    state.categories = state.categories.filter((c) => c.id !== id);
+  }
+
+  // ---------- views ----------
+
+  function viewLoading() {
+    return h("div", null, h("h1", null, "Ledger"), h("p", { class: "muted", style: "margin-top:16px" }, "Loading\u2026"));
+  }
+
+  function viewError() {
+    return h("div", { class: "stack" },
+      h("h1", null, "Ledger"),
+      h("p", { style: "margin-top:16px" }, "Something went wrong: " + state.message),
+      h("button", { class: "btn", onclick: loadData }, "Try again"),
+      h("div", { class: "foot" }, h("button", { onclick: signOut }, "Sign out"))
+    );
+  }
+
+  function viewSetup() {
+    const url = h("input", { id: "url", type: "url", inputmode: "url", placeholder: "https://xxxx.supabase.co", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const key = h("input", { id: "key", type: "text", placeholder: "sb_publishable_\u2026", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    function save(ev) {
+      ev.preventDefault();
+      const u = url.value.trim().replace(/\/+$/, "");
+      const k = key.value.trim();
+      if (!/^https:\/\/.+/.test(u)) { toast("The project URL should start with https://", true); return; }
+      if (!k) { toast("Paste your publishable key.", true); return; }
+      lsSet(STORE_KEY, JSON.stringify({ url: u, key: k }));
+      init();
+    }
+    return h("form", { onsubmit: save },
+      h("h1", null, "Connect Ledger"),
+      h("p", { class: "muted", style: "margin-top:12px" }, "Paste the two values from your Supabase project. They are remembered on this device, so you only do this once per browser."),
+      h("label", { for: "url" }, "Project URL"), url,
+      h("label", { for: "key" }, "Publishable key"), key,
+      h("div", { style: "margin-top:22px" }, h("button", { class: "btn", type: "submit" }, "Connect"))
+    );
+  }
+
+  function viewSignin() {
+    const email = h("input", { id: "email", type: "email", inputmode: "email", autocomplete: "username", autocapitalize: "off" });
+    const pass = h("input", { id: "pass", type: "password", autocomplete: "current-password" });
+    const btn = h("button", { class: "btn", type: "submit" }, "Sign in");
+    async function submit(ev) {
+      ev.preventDefault();
+      btn.disabled = true;
+      const res = await sb.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
+      if (res.error) {
+        btn.disabled = false;
+        toast(res.error.message || "Sign in failed.", true);
+        return;
+      }
+      loadData();
+    }
+    const kids = [
+      h("h1", null, "Ledger"),
+      h("p", { class: "muted", style: "margin-top:12px" }, "Sign in with the user you created in Supabase."),
+      h("label", { for: "email" }, "Email"), email,
+      h("label", { for: "pass" }, "Password"), pass,
+      h("div", { style: "margin-top:22px" }, btn)
+    ];
+    if (!(CONFIG.url && CONFIG.key)) {
+      kids.push(h("div", { class: "foot" }, h("button", { type: "button", onclick: () => { lsDel(STORE_KEY); sb = null; go("setup"); } }, "Change Supabase connection")));
+    }
+    return h("form", { onsubmit: submit }, kids);
+  }
+
+  function viewHome() {
+    const start = periodStart(state.period);
+    const totals = new Map();
+    let sum = 0;
+    for (const e of state.expenses) {
+      if (start && new Date(e.logged_at) < start) continue;
+      const cat = effective(e.category);
+      const cents = toCents(e.amount);
+      totals.set(cat, (totals.get(cat) || 0) + cents);
+      sum += cents;
+    }
+    const rows = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+    const max = rows.length ? rows[0][1] : 0;
+
+    const periods = [["month", "This month"], ["year", "This year"], ["all", "All time"]];
+    const seg = h("div", { class: "seg", role: "group", "aria-label": "Period" },
+      periods.map(([id, label]) => h("button", {
+        type: "button",
+        "aria-pressed": state.period === id ? "true" : "false",
+        onclick: () => { state.period = id; render(); }
+      }, label))
+    );
+
+    const tally = h("div", { class: "card" },
+      rows.length
+        ? rows.map(([name, cents]) => h("div", { class: "tally" },
+            h("div", { class: "line" }, h("span", { class: "name" }, name), h("span", { class: "amt" }, fmt(cents))),
+            h("div", { class: "track" }, h("div", { class: "fill", style: "width:" + (max ? Math.max(2, Math.round((cents / max) * 100)) : 0) + "%" }))
+          ))
+        : h("div", { class: "empty" }, state.expenses.length ? "Nothing logged in this period." : "Nothing logged yet. Enter your first expense below.")
+    );
+
+    const recent = state.expenses.slice(0, 8);
+    const recentCard = h("div", { class: "card" },
+      recent.map((e) => h("div", { class: "row" },
+        h("div", { class: "name" },
+          h("div", null, effective(e.category)),
+          h("div", { class: "muted small" }, when(e.logged_at))
+        ),
+        h("div", { style: "display:flex;align-items:center;gap:6px" },
+          h("span", { class: "amt" }, fmt(toCents(e.amount))),
+          h("button", { class: "x", type: "button", "aria-label": "Delete this entry", onclick: async () => {
+            if (!confirm("Delete this " + fmt(toCents(e.amount)) + " entry?")) return;
+            try { await deleteExpense(e.id); render(); toast("Entry deleted."); }
+            catch (err) { toast(err.message || "Could not delete.", true); }
+          } }, "Delete")
+        )
+      ))
+    );
+
+    return h("div", null,
+      h("div", { class: "top" }, h("h1", null, "Ledger")),
+      h("div", { class: "muted small" }, "Total spent"),
+      h("div", { class: "total" }, fmt(sum)),
+      seg,
+      h("div", { class: "stack", style: "margin-top:18px" },
+        h("button", { class: "btn", type: "button", onclick: () => go("add") }, "Enter expense"),
+        h("button", { class: "btn secondary", type: "button", onclick: () => go("categories") }, "Edit categories")
+      ),
+      h("h2", null, "By category"),
+      tally,
+      recent.length ? h("h2", null, "Recent entries") : null,
+      recent.length ? recentCard : null,
+      h("div", { class: "foot" }, h("button", { type: "button", onclick: signOut }, "Sign out"))
+    );
+  }
+
+  function viewAdd() {
+    const last = lsGet(LAST_CAT_KEY);
+    const names = [DEFAULT].concat(sortedCategories().map((c) => c.name));
+    const select = h("select", { id: "cat" },
+      names.map((n) => h("option", { value: n, selected: n === last }, n))
+    );
+    const amount = h("input", { id: "amt", type: "text", inputmode: "decimal", placeholder: "0.00", autocomplete: "off", enterkeyhint: "done" });
+    const btn = h("button", { class: "btn", type: "submit", disabled: true }, "Log expense");
+
+    function cents() { const c = toCents(amount.value || 0); return Number.isFinite(c) ? c : 0; }
+    amount.addEventListener("input", () => {
+      const cleaned = cleanAmount(amount.value);
+      if (cleaned !== amount.value) amount.value = cleaned;
+      btn.disabled = cents() <= 0;
+    });
+    amount.addEventListener("blur", () => {
+      if (cents() > 0) amount.value = (cents() / 100).toFixed(2);
+    });
+
+    async function submit(ev) {
+      ev.preventDefault();
+      const c = cents();
+      if (c <= 0) return;
+      btn.disabled = true;
+      btn.textContent = "Logging\u2026";
+      try {
+        await addExpense(select.value, c);
+        lsSet(LAST_CAT_KEY, select.value);
+        go("home");
+        toast("Logged " + fmt(c) + " to " + select.value + ".");
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Log expense";
+        toast(err.message || "Could not save. Check your connection.", true);
+      }
+    }
+
+    setTimeout(() => amount.focus(), 0);
+    return h("form", { onsubmit: submit },
+      h("div", { class: "top" }, h("h1", null, "Enter expense"), h("button", { class: "back", type: "button", onclick: () => go("home") }, "Cancel")),
+      h("label", { for: "cat" }, "Category"), select,
+      h("label", { for: "amt" }, "Amount"),
+      h("div", { class: "money" }, h("span", { "aria-hidden": "true" }, "$"), amount),
+      h("div", { style: "margin-top:22px" }, btn),
+      h("p", { class: "muted small", style: "margin-top:14px" }, "The current time is recorded automatically when you log.")
+    );
+  }
+
+  function viewCategories() {
+    const input = h("input", { id: "newcat", type: "text", placeholder: "New category", maxlength: "40", autocomplete: "off", enterkeyhint: "done" });
+    async function submit(ev) {
+      ev.preventDefault();
+      const name = input.value.trim().replace(/\s+/g, " ");
+      if (!name) return;
+      const lower = name.toLowerCase();
+      if (lower === DEFAULT.toLowerCase()) { toast("Default is always there, so it can't be added.", true); return; }
+      if (state.categories.some((c) => c.name.toLowerCase() === lower)) { toast("You already have that category.", true); return; }
+      try { await addCategory(name); render(); toast("Added " + name + "."); }
+      catch (err) { toast(err.message || "Could not add.", true); }
+    }
+
+    const cats = sortedCategories();
+    const list = h("div", { class: "card" },
+      h("div", { class: "row" }, h("span", { class: "name" }, DEFAULT), h("span", { class: "muted small" }, "Always available")),
+      cats.map((c) => h("div", { class: "row" },
+        h("span", { class: "name" }, c.name),
+        h("button", { class: "x", type: "button", onclick: async () => {
+          if (!confirm("Delete \u201C" + c.name + "\u201D? Its past expenses will be counted under Default.")) return;
+          try { await deleteCategory(c.id); render(); toast("Deleted " + c.name + "."); }
+          catch (err) { toast(err.message || "Could not delete.", true); }
+        } }, "Delete")
+      ))
+    );
+
+    return h("div", null,
+      h("div", { class: "top" }, h("h1", null, "Categories"), h("button", { class: "back", type: "button", onclick: () => go("home") }, "Done")),
+      h("form", { class: "inline", onsubmit: submit }, input, h("button", { class: "btn", type: "submit" }, "Add")),
+      h("h2", null, "Your list"),
+      list,
+      h("p", { class: "muted small", style: "margin-top:14px" }, "Deleting a category moves its past expenses to Default. If you add the same name again later, that history comes back to it.")
+    );
+  }
+
+  const views = {
+    loading: viewLoading, error: viewError, setup: viewSetup, signin: viewSignin,
+    home: viewHome, add: viewAdd, categories: viewCategories
+  };
+
+  function render() {
+    app.replaceChildren((views[state.view] || viewLoading)());
+  }
+
+  // ---------- startup ----------
+
+  async function signOut() {
+    try { await sb.auth.signOut(); } catch (e) {}
+    state.categories = [];
+    state.expenses = [];
+    go("signin");
+  }
+
+  async function init() {
+    const cfg = getConfig();
+    if (!cfg) { go("setup"); return; }
+    if (!window.supabase || !window.supabase.createClient) {
+      state.message = "the Supabase library did not load. Check your connection and reload.";
+      go("error");
+      return;
+    }
+    try {
+      sb = window.supabase.createClient(cfg.url, cfg.key);
+    } catch (err) {
+      lsDel(STORE_KEY);
+      go("setup");
+      toast("That project URL or key doesn't look right.", true);
+      return;
+    }
+    sb.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT" && state.view !== "signin" && state.view !== "setup") {
+        setTimeout(() => go("signin"), 0);
+      }
+    });
+    go("loading");
+    const res = await sb.auth.getSession();
+    if (!res.data || !res.data.session) { go("signin"); return; }
+    loadData();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
